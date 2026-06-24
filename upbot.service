@@ -1,0 +1,17 @@
+[Unit]
+Description=Upload Notifier Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/upload-notifier-bot
+ExecStart=/usr/bin/python3 src/bot.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/ubuntu/upload-notifier-bot/.env
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
