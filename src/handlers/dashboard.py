@@ -1,6 +1,4 @@
-"""
-Owner dashboard — MarkdownV2-clean, no nested f-string quotes.
-"""
+"""Owner dashboard — zero nested-quote f-strings."""
 
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -27,22 +25,17 @@ async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def dashboard_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     if not is_owner(query.from_user.id):
         await query.answer("⛔ Owner only.", show_alert=True)
         return
 
     action = query.data.replace("dash_filter_", "")
-
-    if action in ("all", "all_tasks"):
-        if action == "all":
-            # Show the summary dashboard
-            text, kb = _build_dashboard()
-            await query.message.reply_text(text, parse_mode="MarkdownV2", reply_markup=kb)
-        else:
-            await _send_task_list(query.message.reply_text, status=None)
+    if action == "all":
+        text, kb = _build_dashboard()
+        await query.message.reply_text(text, parse_mode="MarkdownV2", reply_markup=kb)
     else:
-        await _send_task_list(query.message.reply_text, status=action)
+        status = None if action == "all_tasks" else action
+        await _send_task_list(query.message.reply_text, status=status)
 
 
 def _build_dashboard():
@@ -57,15 +50,14 @@ def _build_dashboard():
     r = stats.get("rejected", 0)
 
     text = (
-        f"📊 *Dashboard*\n"
-        f"{divider()}\n\n"
-        f"👥 Admins: {bold(str(len(admins)))}   "
-        f"🎬 Uploads: {bold(str(upload_count))}\n\n"
-        f"📋 *Tasks* \\({bold(str(total))} total\\)\n"
-        f"  🟡 Pending   {bold(str(p))}\n"
-        f"  🔵 Awaiting  {bold(str(d))}\n"
-        f"  ✅ Verified  {bold(str(v))}\n"
-        f"  ❌ Rejected  {bold(str(r))}"
+        "📊 *Dashboard*\n" + divider() + "\n\n"
+        "👥 Admins: " + bold(str(len(admins))) + "   "
+        "🎬 Uploads: " + bold(str(upload_count)) + "\n\n"
+        "📋 *Tasks* \\(" + bold(str(total)) + " total\\)\n"
+        "  🟡 Pending   " + bold(str(p)) + "\n"
+        "  🔵 Awaiting  " + bold(str(d)) + "\n"
+        "  ✅ Verified  " + bold(str(v)) + "\n"
+        "  ❌ Rejected  " + bold(str(r))
     )
     kb = InlineKeyboardMarkup([
         [
@@ -87,41 +79,33 @@ async def _send_task_list(reply_fn, status=None):
 
     if not tasks:
         await reply_fn(
-            f"📭 No {escape_md(label)} tasks found\\.",
+            "📭 No " + escape_md(label) + " tasks found\\.",
             parse_mode="MarkdownV2",
         )
         return
 
-    count_esc = escape_md(str(len(tasks)))
-    label_esc = escape_md(label)
-    await reply_fn(
-        f"📋 *{label_esc} Tasks* \\({count_esc}\\)\n{divider()}",
-        parse_mode="MarkdownV2",
-    )
+    header = "📋 *" + escape_md(label) + " Tasks* \\(" + str(len(tasks)) + "\\)\n" + divider()
+    await reply_fn(header, parse_mode="MarkdownV2")
 
     for task in tasks[:15]:
-        # Extract fields safely before building string
-        admin_name = task["full_name"] or task["username"] or str(task["admin_id"])
-        task_title = task["title"]
-        task_desc  = task["description"] or ""
-        created    = fmt_dt(task["created_at"])
-
-        try:
-            priority_key = task["priority"] or "normal"
-        except (IndexError, KeyError):
-            priority_key = "normal"
+        admin_name    = task["full_name"] or task["username"] or str(task["admin_id"])
+        title         = task["title"]
+        desc          = task["description"] or ""
+        created       = fmt_dt(task["created_at"])
+        priority_key  = task["priority"] if task["priority"] else "normal"
         priority_label = PRIORITY_LABEL.get(priority_key, "🔵 Normal")
+        task_id       = task["id"]
 
-        desc_line = f"\n   📝 {escape_md(task_desc)}" if task_desc else ""
+        desc_line = "\n   📝 " + escape_md(desc) if desc else ""
         text = (
-            f"🆔 {bold('#' + str(task['id']))} — {escape_md(admin_name)}\n"
-            f"📌 {bold(task_title)}{desc_line}\n"
-            f"🎯 {escape_md(priority_label)}   🕐 {escape_md(created)}"
+            "🆔 " + bold("#" + str(task_id)) + " — " + escape_md(admin_name) + "\n"
+            "📌 " + bold(title) + desc_line + "\n"
+            "🎯 " + escape_md(priority_label) + "   🕐 " + escape_md(created)
         )
 
         if task["status"] == "done":
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔍 Verify", callback_data=f"verify_task_{task['id']}")
+                InlineKeyboardButton("🔍 Verify", callback_data="verify_task_" + str(task_id))
             ]])
             await reply_fn(text, parse_mode="MarkdownV2", reply_markup=kb)
         else:

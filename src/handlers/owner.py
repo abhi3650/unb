@@ -1,7 +1,4 @@
-"""
-Owner-only handlers.
-Fixes: dead variable, italic() double-escape, task dict access safety.
-"""
+"""Owner-only handlers — clean rewrite, zero nested-quote f-strings."""
 
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -22,7 +19,6 @@ def is_owner(uid: int) -> bool:
 
 
 def owner_only(func):
-    """Decorator: reject non-owner callers, return END for ConversationHandlers."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_owner(update.effective_user.id):
             await update.message.reply_text(
@@ -35,18 +31,12 @@ def owner_only(func):
     return wrapper
 
 
-def _safe_priority(task) -> str:
+def _safe(task, key: str, default: str = "") -> str:
     try:
-        return task["priority"] or "normal"
+        v = task[key]
+        return v if v else default
     except (IndexError, KeyError):
-        return "normal"
-
-
-def _safe_deadline(task) -> str:
-    try:
-        return task["deadline"] or ""
-    except (IndexError, KeyError):
-        return ""
+        return default
 
 
 # ─── /start ─────────────────────────────────────────────────────
@@ -56,12 +46,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid  = user.id
 
     if is_owner(uid):
-        name = escape_md(user.first_name)
+        name     = escape_md(user.first_name)
+        bot_bold = bold("Upload Notifier Bot")
         text = (
-            f"👑 *Welcome back, {name}\\!*\n\n"
-            f"{divider()}\n"
-            f"🎬 {bold('Upload Notifier Bot')}\n"
-            f"{divider()}\n\n"
+            "👑 *Welcome back, " + name + "\\!*\n\n"
+            + divider() + "\n"
+            "🎬 " + bot_bold + "\n"
+            + divider() + "\n\n"
             "📋 *Owner Commands*\n\n"
             "📌 *Tasks*\n"
             "  /assign — Assign task to admin\n"
@@ -73,7 +64,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "  /removeadmin — Remove admin\n"
             "  /broadcast — Message all admins\n\n"
             "🎬 *Content*\n"
-            "  /uploads — Latest scraped uploads"
+            "  /uploads — Latest scraped uploads\n"
+            "  /search — Search 1TamilMV\n"
+            "  /watchlist — My saved watchlist\n\n"
+            "📡 *System*\n"
+            "  /status — Bot health\n"
+            "  /setinterval — Change scrape interval"
         )
         kb = InlineKeyboardMarkup([
             [
@@ -86,32 +82,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif db.is_admin(uid):
         db.update_admin_name(uid, user.username or "", user.full_name or "")
-        name  = escape_md(user.first_name)
-        stats = db.get_admin_stats(uid)
-        p = stats.get("pending",  0)
-        d = stats.get("done",     0)
-        v = stats.get("verified", 0)
-
+        name       = escape_md(user.first_name)
+        bot_bold   = bold("Upload Notifier Bot — Admin Panel")
+        stats      = db.get_admin_stats(uid)
+        p_bold     = bold(str(stats.get("pending",  0)))
+        d_bold     = bold(str(stats.get("done",     0)))
+        v_bold     = bold(str(stats.get("verified", 0)))
         text = (
-            f"🛡 *Hello, {name}\\!*\n\n"
-            f"{divider()}\n"
-            f"🎬 {bold('Upload Notifier Bot — Admin Panel')}\n"
-            f"{divider()}\n\n"
-            f"🟡 Pending: {bold(str(p))}   🔵 Done: {bold(str(d))}   ✅ Verified: {bold(str(v))}\n\n"
+            "🛡 *Hello, " + name + "\\!*\n\n"
+            + divider() + "\n"
+            "🎬 " + bot_bold + "\n"
+            + divider() + "\n\n"
+            "🟡 Pending: " + p_bold + "   "
+            "🔵 Done: " + d_bold + "   "
+            "✅ Verified: " + v_bold + "\n\n"
             "📋 *Commands*\n"
             "  /mytasks — View your tasks\n"
-            "  /uploads — Latest 1TamilMV uploads"
+            "  /uploads — Latest 1TamilMV uploads\n"
+            "  /search — Search 1TamilMV\n"
+            "  /watchlist — My saved watchlist\n"
+            "  /status — Bot status"
         )
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📋 My Tasks",        callback_data="my_tasks_btn")],
-            [InlineKeyboardButton("🎬 Latest Uploads",  callback_data="show_uploads")],
+            [InlineKeyboardButton("📋 My Tasks",       callback_data="my_tasks_btn")],
+            [InlineKeyboardButton("🎬 Latest Uploads", callback_data="show_uploads")],
         ])
         await update.message.reply_text(text, parse_mode="MarkdownV2", reply_markup=kb)
 
     else:
         name = escape_md(user.first_name)
         await update.message.reply_text(
-            f"👋 *Hello, {name}\\!*\n\n"
+            "👋 *Hello, " + name + "\\!*\n\n"
             "You are not authorized to use this bot\\.\n"
             "Contact the bot owner to get access\\.",
             parse_mode="MarkdownV2",
@@ -122,8 +123,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @owner_only
 async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admins = db.get_all_admins()
-    if not admins:
+    if not db.get_all_admins():
         await update.message.reply_text(
             "⚠️ No admins registered\\. Use /addadmin first\\.",
             parse_mode="MarkdownV2",
@@ -154,15 +154,14 @@ async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["task_title"] = parts[0].strip()
     context.user_data["task_desc"]  = parts[1].strip() if len(parts) > 1 else ""
 
-    saved_title = bold(context.user_data["task_title"])  # use bold() on raw
+    title_bold = bold(context.user_data["task_title"])
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("🟢 Low",    callback_data="priority_low"),
         InlineKeyboardButton("🔵 Normal", callback_data="priority_normal"),
         InlineKeyboardButton("🔴 High",   callback_data="priority_high"),
     ]])
     await update.message.reply_text(
-        f"✅ Task: {saved_title}\n\n"
-        "Select the *priority* for this task:",
+        "✅ Task: " + title_bold + "\n\nSelect the *priority* for this task:",
         parse_mode="MarkdownV2",
         reply_markup=kb,
     )
@@ -199,7 +198,7 @@ async def handle_deadline_skip(update: Update, context: ContextTypes.DEFAULT_TYP
     return await _show_admin_picker(update, context, via_message=False, query=query)
 
 
-async def _show_admin_picker(update, context, via_message: bool = True, query=None):
+async def _show_admin_picker(update, context, via_message=True, query=None):
     admins   = db.get_all_admins()
     priority = context.user_data.get("task_priority", "normal")
     title    = context.user_data.get("task_title", "Untitled")
@@ -207,20 +206,22 @@ async def _show_admin_picker(update, context, via_message: bool = True, query=No
 
     pri_label = PRIORITY_LABEL.get(priority, priority)
     dl_text   = escape_md(deadline) if deadline else italic("No deadline")
+    title_b   = bold(title)
+    pri_esc   = escape_md(pri_label)
 
-    buttons = [
-        [InlineKeyboardButton(
-            f"👤 {admin['full_name'] or admin['username'] or str(admin['user_id'])}",
-            callback_data=f"select_admin_{admin['user_id']}"
-        )]
-        for admin in admins
-    ]
+    buttons = []
+    for admin in admins:
+        aname = admin["full_name"] or admin["username"] or str(admin["user_id"])
+        buttons.append([InlineKeyboardButton(
+            "👤 " + aname,
+            callback_data="select_admin_" + str(admin["user_id"])
+        )])
 
     text = (
-        f"👤 *Choose admin to assign:*\n\n"
-        f"📌 {bold(title)}\n"
-        f"🎯 Priority: {escape_md(pri_label)}\n"
-        f"📅 Deadline: {dl_text}"
+        "👤 *Choose admin to assign:*\n\n"
+        "📌 " + title_b + "\n"
+        "🎯 Priority: " + pri_esc + "\n"
+        "📅 Deadline: " + dl_text
     )
     kb = InlineKeyboardMarkup(buttons)
 
@@ -232,7 +233,7 @@ async def _show_admin_picker(update, context, via_message: bool = True, query=No
 
 
 async def handle_admin_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
+    query    = update.callback_query
     await query.answer()
 
     admin_id  = int(query.data.replace("select_admin_", ""))
@@ -243,32 +244,37 @@ async def handle_admin_selection(update: Update, context: ContextTypes.DEFAULT_T
 
     task_id   = db.create_task(admin_id, title, desc, priority, deadline)
     admin     = db.get_admin(admin_id)
-    admin_name = admin["full_name"] or admin["username"] or str(admin_id)
-    pri_label  = PRIORITY_LABEL.get(priority, priority)
-    dl_text    = escape_md(deadline) if deadline else italic("None")
-    desc_line  = f"\n📝 {escape_md(desc)}" if desc else ""
-    dl_line    = f"\n📅 Deadline: {escape_md(deadline)}" if deadline else ""
+    aname     = admin["full_name"] or admin["username"] or str(admin_id)
+    pri_label = PRIORITY_LABEL.get(priority, priority)
+    dl_text   = escape_md(deadline) if deadline else italic("None")
+
+    title_b   = bold(title)
+    aname_b   = bold(aname)
+    pri_esc   = escape_md(pri_label)
+    tid_b     = bold("#" + str(task_id))
+    desc_line = "\n📝 " + escape_md(desc) if desc else ""
+    dl_line   = "\n📅 Deadline: " + escape_md(deadline) if deadline else ""
 
     await query.edit_message_text(
-        f"✅ *Task \\#{task_id} Assigned\\!*\n\n"
-        f"👤 Admin: {bold(admin_name)}\n"
-        f"📌 {bold(title)}{desc_line}\n"
-        f"🎯 Priority: {escape_md(pri_label)}\n"
-        f"📅 Deadline: {dl_text}",
+        "✅ *Task " + tid_b + " Assigned\\!*\n\n"
+        "👤 Admin: " + aname_b + "\n"
+        "📌 " + title_b + desc_line + "\n"
+        "🎯 Priority: " + pri_esc + "\n"
+        "📅 Deadline: " + dl_text,
         parse_mode="MarkdownV2",
     )
 
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Mark as Done", callback_data=f"done_task_{task_id}")
+        InlineKeyboardButton("✅ Mark as Done", callback_data="done_task_" + str(task_id))
     ]])
     try:
         await context.bot.send_message(
             chat_id=admin_id,
             text=(
-                f"📬 *New Task Assigned\\!*\n\n"
-                f"🆔 Task {bold('#' + str(task_id))}\n"
-                f"📌 {bold(title)}{desc_line}\n"
-                f"🎯 Priority: {escape_md(pri_label)}{dl_line}\n\n"
+                "📬 *New Task Assigned\\!*\n\n"
+                "🆔 Task " + tid_b + "\n"
+                "📌 " + title_b + desc_line + "\n"
+                "🎯 Priority: " + pri_esc + dl_line + "\n\n"
                 "Complete it and press the button below 👇"
             ),
             parse_mode="MarkdownV2",
@@ -277,17 +283,14 @@ async def handle_admin_selection(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as exc:
         await context.bot.send_message(
             chat_id=OWNER_ID,
-            text=(
-                f"⚠️ *Could not notify admin {escape_md(admin_name)}*\n"
-                f"Error: {escape_md(str(exc))}"
-            ),
+            text="⚠️ *Could not notify admin " + escape_md(aname) + "*\nError: " + escape_md(str(exc)),
             parse_mode="MarkdownV2",
         )
 
     return ConversationHandler.END
 
 
-# ─── TASK VERIFICATION ──────────────────────────────────────────
+# ─── VERIFICATION ───────────────────────────────────────────────
 
 async def verify_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -297,26 +300,33 @@ async def verify_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("⛔ Only the owner can verify tasks.", show_alert=True)
         return
 
-    task_id = int(query.data.replace("verify_task_", ""))
-    task    = db.get_task(task_id)
+    task_id  = int(query.data.replace("verify_task_", ""))
+    task     = db.get_task(task_id)
     if not task:
         await query.edit_message_text("❌ Task not found\\.", parse_mode="MarkdownV2")
         return
 
-    priority   = PRIORITY_LABEL.get(_safe_priority(task), "Normal")
-    desc_line  = f"\n📝 {escape_md(task['description'])}" if task["description"] else ""
-    done_at    = fmt_dt(task["done_at"]) if task["done_at"] else "—"
+    title     = _safe(task, "title")
+    desc      = _safe(task, "description")
+    priority  = PRIORITY_LABEL.get(_safe(task, "priority", "normal"), "Normal")
+    done_at   = fmt_dt(_safe(task, "done_at")) or "—"
+    created   = fmt_dt(_safe(task, "created_at"))
+
+    desc_line = "\n📝 " + escape_md(desc) if desc else ""
+    title_b   = bold(title)
+    tid_b     = bold("#" + str(task_id))
+    pri_esc   = escape_md(priority)
 
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Approve",        callback_data=f"approve_task_{task_id}"),
-        InlineKeyboardButton("❌ Not Completed",  callback_data=f"reject_task_{task_id}"),
+        InlineKeyboardButton("✅ Approve",       callback_data="approve_task_" + str(task_id)),
+        InlineKeyboardButton("❌ Not Completed", callback_data="reject_task_"  + str(task_id)),
     ]])
     await query.edit_message_text(
-        f"🔍 *Verify Task \\#{task_id}*\n\n"
-        f"📌 {bold(task['title'])}{desc_line}\n"
-        f"🎯 Priority: {escape_md(priority)}\n"
-        f"🕐 Assigned: {escape_md(fmt_dt(task['created_at']))}\n"
-        f"🕐 Done at:  {escape_md(done_at)}\n\n"
+        "🔍 *Verify Task " + tid_b + "*\n\n"
+        "📌 " + title_b + desc_line + "\n"
+        "🎯 Priority: " + pri_esc + "\n"
+        "🕐 Assigned: " + escape_md(created) + "\n"
+        "🕐 Done at:  " + escape_md(done_at) + "\n\n"
         "Is this task completed correctly?",
         parse_mode="MarkdownV2",
         reply_markup=kb,
@@ -345,11 +355,14 @@ async def handle_verification(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     admin_id = task["admin_id"]
+    title    = _safe(task, "title")
+    title_b  = bold(title)
+    tid_b    = bold("#" + str(task_id))
 
     if action == "approve":
         db.update_task_status(task_id, "verified")
         await query.edit_message_text(
-            f"✅ *Task \\#{task_id} Approved\\!*\n📌 {escape_md(task['title'])}",
+            "✅ *Task " + tid_b + " Approved\\!*\n📌 " + escape_md(title),
             parse_mode="MarkdownV2",
         )
         try:
@@ -357,21 +370,21 @@ async def handle_verification(update: Update, context: ContextTypes.DEFAULT_TYPE
                 chat_id=admin_id,
                 text=(
                     "🎉 *Great work\\!*\n\n"
-                    f"Your task {bold('#' + str(task_id))} has been *verified and approved* by the owner\\! ✅\n\n"
-                    f"📌 {bold(task['title'])}"
+                    "Your task " + tid_b + " has been *verified and approved* by the owner\\! ✅\n\n"
+                    "📌 " + title_b
                 ),
                 parse_mode="MarkdownV2",
             )
         except Exception:
             pass
 
-    else:  # reject
+    else:
         context.user_data["reject_task_id"]        = task_id
         context.user_data["reject_admin_id"]        = admin_id
         context.user_data["awaiting_reject_reason"] = True
         await query.edit_message_text(
-            f"❌ *Rejecting Task \\#{task_id}*\n\n"
-            f"📌 {bold(task['title'])}\n\n"
+            "❌ *Rejecting Task " + tid_b + "*\n\n"
+            "📌 " + title_b + "\n\n"
             "Type the *reason* for rejection so the admin knows what to fix:",
             parse_mode="MarkdownV2",
         )
@@ -396,25 +409,28 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ Task not found\\.", parse_mode="MarkdownV2")
         return
 
+    title   = _safe(task, "title")
+    title_b = bold(title)
+    tid_b   = bold("#" + str(task_id))
     db.update_task_status(task_id, "rejected", reject_reason=reason)
 
     await update.message.reply_text(
-        f"❌ *Task \\#{task_id} Rejected*\n"
-        f"📌 {escape_md(task['title'])}\n\n"
-        f"📝 Reason sent: {italic(reason)}",
+        "❌ *Task " + tid_b + " Rejected*\n"
+        "📌 " + escape_md(title) + "\n\n"
+        "📝 Reason sent: " + italic(reason),
         parse_mode="MarkdownV2",
     )
 
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Mark as Done Again", callback_data=f"done_task_{task_id}")
+        InlineKeyboardButton("✅ Mark as Done Again", callback_data="done_task_" + str(task_id))
     ]])
     try:
         await context.bot.send_message(
             chat_id=admin_id,
             text=(
-                f"⚠️ *Task \\#{task_id} Rejected*\n\n"
-                f"📌 {bold(task['title'])}\n\n"
-                f"📝 *Reason:* {italic(reason)}\n\n"
+                "⚠️ *Task " + tid_b + " Rejected*\n\n"
+                "📌 " + title_b + "\n\n"
+                "📝 *Reason:* " + italic(reason) + "\n\n"
                 "Please fix it and press *Done* again 👇"
             ),
             parse_mode="MarkdownV2",
@@ -428,53 +444,45 @@ async def handle_reject_reason(update: Update, context: ContextTypes.DEFAULT_TYP
 
 @owner_only
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = _build_stats()
-    await update.message.reply_text(text, parse_mode="MarkdownV2")
+    await update.message.reply_text(_build_stats(), parse_mode="MarkdownV2")
 
 
 async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    text = _build_stats()
-    await query.message.reply_text(text, parse_mode="MarkdownV2")
+    await query.message.reply_text(_build_stats(), parse_mode="MarkdownV2")
 
 
 def _build_stats() -> str:
-    task_stats    = db.get_task_stats()
-    admins        = db.get_all_admins()
-    upload_count  = db.get_upload_count()
-
-    total    = sum(task_stats.values())
-    pending  = task_stats.get("pending",  0)
-    done     = task_stats.get("done",     0)
-    verified = task_stats.get("verified", 0)
-    rejected = task_stats.get("rejected", 0)
+    task_stats   = db.get_task_stats()
+    admins       = db.get_all_admins()
+    upload_count = db.get_upload_count()
+    total        = sum(task_stats.values())
 
     lines = [
         "📈 *Bot Statistics*",
         divider(),
         "",
-        f"👥 Admins registered: {bold(str(len(admins)))}",
-        f"🎬 Uploads tracked:   {bold(str(upload_count))}",
+        "👥 Admins registered: " + bold(str(len(admins))),
+        "🎬 Uploads tracked:   " + bold(str(upload_count)),
         "",
-        f"📋 *Tasks* \\({bold(str(total))} total\\)",
-        f"  🟡 Pending:   {bold(str(pending))}",
-        f"  🔵 Awaiting:  {bold(str(done))}",
-        f"  ✅ Verified:  {bold(str(verified))}",
-        f"  ❌ Rejected:  {bold(str(rejected))}",
+        "📋 *Tasks* \\(" + bold(str(total)) + " total\\)",
+        "  🟡 Pending:   " + bold(str(task_stats.get("pending",  0))),
+        "  🔵 Awaiting:  " + bold(str(task_stats.get("done",     0))),
+        "  ✅ Verified:  " + bold(str(task_stats.get("verified", 0))),
+        "  ❌ Rejected:  " + bold(str(task_stats.get("rejected", 0))),
         "",
         "📊 *Per Admin*",
     ]
     for admin in admins:
-        s     = db.get_admin_stats(admin["user_id"])
-        name  = admin["full_name"] or admin["username"] or str(admin["user_id"])
-        tot   = sum(s.values())
-        ver   = s.get("verified", 0)
-        lines.append(f"  👤 {bold(name)}: {bold(str(tot))} tasks, {bold(str(ver))} verified")
-
+        s    = db.get_admin_stats(admin["user_id"])
+        aname = admin["full_name"] or admin["username"] or str(admin["user_id"])
+        lines.append(
+            "  👤 " + bold(aname) + ": " + bold(str(sum(s.values()))) +
+            " tasks, " + bold(str(s.get("verified", 0))) + " verified"
+        )
     if not admins:
         lines.append("  _No admins yet_")
-
     return "\n".join(lines)
 
 
@@ -490,16 +498,17 @@ async def list_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    lines = [f"👥 *Registered Admins* \\({len(admins)}\\)", divider()]
+    lines = ["👥 *Registered Admins* \\(" + str(len(admins)) + "\\)", divider()]
     for i, admin in enumerate(admins, 1):
-        name  = admin["full_name"] or "Unknown"
-        uname = f"@{escape_md(admin['username'])}" if admin["username"] else italic("no username")
+        aname = admin["full_name"] or "Unknown"
+        uname = "@" + escape_md(admin["username"]) if admin["username"] else italic("no username")
         s     = db.get_admin_stats(admin["user_id"])
-        tot   = sum(s.values())
-        ver   = s.get("verified", 0)
-        lines.append(f"{i}\\. {bold(name)} \\({uname}\\)")
-        lines.append(f"   🆔 `{admin['user_id']}`  📋 {tot} tasks  ✅ {ver} verified")
-
+        lines.append(str(i) + "\\. " + bold(aname) + " \\(" + uname + "\\)")
+        lines.append(
+            "   🆔 `" + str(admin["user_id"]) + "`  "
+            "📋 " + str(sum(s.values())) + " tasks  "
+            "✅ " + str(s.get("verified", 0)) + " verified"
+        )
     await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
 
 
@@ -533,8 +542,7 @@ async def handle_add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id == OWNER_ID:
         await update.message.reply_text(
-            "⚠️ You cannot add yourself as an admin\\.",
-            parse_mode="MarkdownV2",
+            "⚠️ You cannot add yourself as an admin\\.", parse_mode="MarkdownV2"
         )
         return ConversationHandler.END
 
@@ -543,17 +551,16 @@ async def handle_add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_name = chat.full_name or ""
         username  = chat.username  or ""
         db.add_admin(user_id, username, full_name)
+        display   = bold(full_name or str(user_id))
         await update.message.reply_text(
-            f"✅ {bold(full_name or str(user_id))} added as admin\\!",
+            "✅ " + display + " added as admin\\!",
             parse_mode="MarkdownV2",
         )
-        # Register admin-scoped commands immediately
         from telegram import BotCommandScopeChat
         from bot import ADMIN_COMMANDS
         try:
             await context.bot.set_my_commands(
-                ADMIN_COMMANDS,
-                scope=BotCommandScopeChat(chat_id=user_id),
+                ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=user_id)
             )
         except Exception:
             pass
@@ -568,7 +575,7 @@ async def handle_add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as exc:
         await update.message.reply_text(
-            f"❌ Could not add admin: `{escape_md(str(exc))}`",
+            "❌ Could not add admin: `" + escape_md(str(exc)) + "`",
             parse_mode="MarkdownV2",
         )
 
@@ -584,13 +591,13 @@ async def remove_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 No admins to remove\\.", parse_mode="MarkdownV2")
         return ConversationHandler.END
 
-    buttons = [
-        [InlineKeyboardButton(
-            f"🗑 {admin['full_name'] or admin['username'] or str(admin['user_id'])}",
-            callback_data=f"rm_admin_{admin['user_id']}"
-        )]
-        for admin in admins
-    ]
+    buttons = []
+    for admin in admins:
+        aname = admin["full_name"] or admin["username"] or str(admin["user_id"])
+        buttons.append([InlineKeyboardButton(
+            "🗑 " + aname,
+            callback_data="rm_admin_" + str(admin["user_id"])
+        )])
     buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="rm_admin_cancel")])
 
     await update.message.reply_text(
@@ -619,10 +626,10 @@ async def handle_remove_admin_btn(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text("❌ Admin not found\\.", parse_mode="MarkdownV2")
         return
 
-    name = admin["full_name"] or admin["username"] or str(user_id)
+    aname = admin["full_name"] or admin["username"] or str(user_id)
     db.remove_admin(user_id)
     await query.edit_message_text(
-        f"✅ {bold(name)} has been removed as admin\\.",
+        "✅ " + bold(aname) + " has been removed as admin\\.",
         parse_mode="MarkdownV2",
     )
     try:
@@ -658,7 +665,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=admin["user_id"],
-                text=f"📢 *Broadcast from Owner:*\n\n{escape_md(message)}",
+                text="📢 *Broadcast from Owner:*\n\n" + escape_md(message),
                 parse_mode="MarkdownV2",
             )
             sent += 1
@@ -666,9 +673,9 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed += 1
 
     await update.message.reply_text(
-        f"📢 *Broadcast Complete*\n\n"
-        f"✅ Sent: {bold(str(sent))}\n"
-        f"❌ Failed: {bold(str(failed))}",
+        "📢 *Broadcast Complete*\n\n"
+        "✅ Sent: " + bold(str(sent)) + "\n"
+        "❌ Failed: " + bold(str(failed)),
         parse_mode="MarkdownV2",
     )
     return ConversationHandler.END

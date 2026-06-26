@@ -1,7 +1,6 @@
-"""
-Admin-facing handlers: /mytasks, mark_done, uploads, notes.
-"""
+"""Admin-facing handlers — zero nested-quote f-strings."""
 
+import logging
 from typing import Optional, Tuple
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -9,55 +8,50 @@ from config import OWNER_ID
 import database as db
 from utils import escape_md, bold, italic, divider, fmt_dt, STATUS_LABEL, PRIORITY_LABEL
 
+logger = logging.getLogger(__name__)
 
-def _get_priority(task) -> str:
-    """Safe priority lookup for sqlite3.Row objects."""
+
+def _safe(task, key: str, default: str = "") -> str:
     try:
-        return task["priority"] or "normal"
+        v = task[key]
+        return v if v else default
     except (IndexError, KeyError):
-        return "normal"
+        return default
 
 
-def _get_deadline(task) -> str:
-    try:
-        return task["deadline"] or ""
-    except (IndexError, KeyError):
-        return ""
+def _task_card(task, show_done_btn: bool = False) -> Tuple[str, InlineKeyboardMarkup]:
+    status    = STATUS_LABEL.get(_safe(task, "status", "pending"), "Unknown")
+    priority  = PRIORITY_LABEL.get(_safe(task, "priority", "normal"), "🔵 Normal")
+    title     = _safe(task, "title")
+    desc      = _safe(task, "description")
+    deadline  = _safe(task, "deadline")
+    reject    = _safe(task, "reject_reason")
+    created   = fmt_dt(_safe(task, "created_at"))
+    task_id   = task["id"]
 
-
-def _get_reject_reason(task) -> str:
-    try:
-        return task["reject_reason"] or ""
-    except (IndexError, KeyError):
-        return ""
-
-
-def _task_card(task, show_done_btn: bool = False) -> Tuple[str, Optional[InlineKeyboardMarkup]]:
-    """Build a MarkdownV2-safe task card string + optional keyboard."""
-    status   = STATUS_LABEL.get(task["status"], task["status"])
-    priority = PRIORITY_LABEL.get(_get_priority(task), "🔵 Normal")
-    deadline = _get_deadline(task)
-    reject   = _get_reject_reason(task)
-
-    desc_line    = f"\n📝 {escape_md(task['description'])}" if task["description"] else ""
-    dl_line      = f"\n📅 Deadline: {escape_md(deadline)}" if deadline else ""
-    reject_line  = f"\n⚠️ Reason: {italic(reject)}" if reject and task["status"] == "rejected" else ""
+    title_b   = bold(title)
+    tid_b     = bold("#" + str(task_id))
+    desc_line = "\n📝 " + escape_md(desc) if desc else ""
+    dl_line   = "\n📅 Deadline: " + escape_md(deadline) if deadline else ""
+    rej_line  = "\n⚠️ Reason: " + italic(reject) if reject and _safe(task, "status") == "rejected" else ""
 
     text = (
-        f"🆔 Task {bold('#' + str(task['id']))}\n"
-        f"📌 {bold(task['title'])}{desc_line}{dl_line}\n"
-        f"🎯 Priority: {escape_md(priority)}\n"
-        f"📊 Status: {escape_md(status)}{reject_line}\n"
-        f"🕐 Assigned: {escape_md(fmt_dt(task['created_at']))}"
+        "🆔 Task " + tid_b + "\n"
+        "📌 " + title_b + desc_line + dl_line + "\n"
+        "🎯 Priority: " + escape_md(priority) + "\n"
+        "📊 Status: " + escape_md(status) + rej_line + "\n"
+        "🕐 Assigned: " + escape_md(created)
     )
 
     buttons = []
     if show_done_btn:
-        buttons.append([InlineKeyboardButton("✅ Mark as Done", callback_data=f"done_task_{task['id']}")])
-    buttons.append([InlineKeyboardButton("📝 Add Note", callback_data=f"add_note_{task['id']}")])
-
-    kb = InlineKeyboardMarkup(buttons)
-    return text, kb
+        buttons.append([InlineKeyboardButton(
+            "✅ Mark as Done", callback_data="done_task_" + str(task_id)
+        )])
+    buttons.append([InlineKeyboardButton(
+        "📝 Add Note", callback_data="add_note_" + str(task_id)
+    )])
+    return text, InlineKeyboardMarkup(buttons)
 
 
 # ─── /mytasks ───────────────────────────────────────────────────
@@ -88,11 +82,10 @@ async def my_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE, via_callb
     done     = [t for t in tasks if t["status"] not in ("pending", "rejected")]
 
     await reply_fn(
-        f"📋 *Your Tasks* \\({len(tasks)} total\\)\n"
-        f"{divider()}\n"
-        f"🟡 Pending: {bold(str(len(pending)))}  "
-        f"❌ Rejected: {bold(str(len(rejected)))}  "
-        f"✅ Done: {bold(str(len(done)))}",
+        "📋 *Your Tasks* \\(" + str(len(tasks)) + " total\\)\n" + divider() + "\n"
+        "🟡 Pending: " + bold(str(len(pending))) + "  "
+        "❌ Rejected: " + bold(str(len(rejected))) + "  "
+        "✅ Done: " + bold(str(len(done))),
         parse_mode="MarkdownV2",
     )
 
@@ -108,7 +101,7 @@ async def my_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE, via_callb
 # ─── MARK DONE ──────────────────────────────────────────────────
 
 async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
+    query   = update.callback_query
     await query.answer("Submitting…")
 
     uid     = query.from_user.id
@@ -131,29 +124,33 @@ async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     admin      = db.get_admin(uid)
     admin_name = admin["full_name"] if admin else str(uid)
-    priority   = PRIORITY_LABEL.get(_get_priority(task), "Normal")
+    title      = _safe(task, "title")
+    priority   = PRIORITY_LABEL.get(_safe(task, "priority", "normal"), "Normal")
+    tid_b      = bold("#" + str(task_id))
+    title_b    = bold(title)
 
     await query.edit_message_text(
-        f"🔵 *Task \\#{task_id} Submitted\\!*\n\n"
-        f"📌 {bold(task['title'])}\n\n"
+        "🔵 *Task " + tid_b + " Submitted\\!*\n\n"
+        "📌 " + title_b + "\n\n"
         "⏳ Waiting for owner verification\\.\\.\\.",
         parse_mode="MarkdownV2",
     )
 
-    desc_line = f"\n📝 {escape_md(task['description'])}" if task["description"] else ""
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍 Verify Task", callback_data=f"verify_task_{task_id}")]
-    ])
+    desc      = _safe(task, "description")
+    desc_line = "\n📝 " + escape_md(desc) if desc else ""
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔍 Verify Task", callback_data="verify_task_" + str(task_id))
+    ]])
 
     try:
         await context.bot.send_message(
             chat_id=OWNER_ID,
             text=(
-                f"🔔 *Task Completed\\!*\n\n"
-                f"👤 Admin: {bold(admin_name)}\n"
-                f"🆔 Task {bold('#' + str(task_id))}\n"
-                f"📌 {bold(task['title'])}{desc_line}\n"
-                f"🎯 Priority: {escape_md(priority)}\n\n"
+                "🔔 *Task Completed\\!*\n\n"
+                "👤 Admin: " + bold(admin_name) + "\n"
+                "🆔 Task " + tid_b + "\n"
+                "📌 " + title_b + desc_line + "\n"
+                "🎯 Priority: " + escape_md(priority) + "\n\n"
                 "Tap below to verify 👇"
             ),
             parse_mode="MarkdownV2",
@@ -161,10 +158,6 @@ async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as exc:
         logger.warning("Could not notify owner about task %d: %s", task_id, exc)
-
-
-import logging
-logger = logging.getLogger(__name__)
 
 
 # ─── ADD NOTE ───────────────────────────────────────────────────
@@ -176,7 +169,7 @@ async def add_note_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["note_task_id"]  = task_id
     context.user_data["awaiting_note"] = True
     await query.message.reply_text(
-        f"📝 *Add Note to Task \\#{task_id}*\n\nType your note below:",
+        "📝 *Add Note to Task \\#" + str(task_id) + "*\n\nType your note below:",
         parse_mode="MarkdownV2",
     )
 
@@ -196,20 +189,20 @@ async def receive_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task  = db.get_task(task_id)
     admin = db.get_admin(uid)
     name  = admin["full_name"] if admin else str(uid)
+    title = _safe(task, "title") if task else "Unknown"
 
     await update.message.reply_text(
-        f"✅ Note added to Task \\#{task_id}\\.",
+        "✅ Note added to Task \\#" + str(task_id) + "\\.",
         parse_mode="MarkdownV2",
     )
-
     try:
         await context.bot.send_message(
             chat_id=OWNER_ID,
             text=(
-                f"📝 *New Note on Task \\#{task_id}*\n\n"
-                f"👤 From: {bold(name)}\n"
-                f"📌 Task: {bold(task['title'])}\n\n"
-                f"💬 {escape_md(note_text)}"
+                "📝 *New Note on Task \\#" + str(task_id) + "*\n\n"
+                "👤 From: " + bold(name) + "\n"
+                "📌 Task: " + bold(title) + "\n\n"
+                "💬 " + escape_md(note_text)
             ),
             parse_mode="MarkdownV2",
         )
@@ -260,19 +253,20 @@ async def _send_uploads(reply_fn, page: int = 0):
     lines = [
         "🎬 *Latest 1TamilMV Uploads*",
         divider(),
-        f"Page {bold(str(page + 1))} of {bold(str(total_pages))} — {bold(str(len(uploads)))} total",
+        "Page " + bold(str(page + 1)) + " of " + bold(str(total_pages)) +
+        " — " + bold(str(len(uploads))) + " total",
         "",
     ]
     for i, upload in enumerate(page_items, start + 1):
-        q         = f" `{upload['quality']}`" if upload["quality"] else ""
+        q         = " `" + upload["quality"] + "`" if upload["quality"] else ""
         title_esc = escape_md(upload["title"])
-        lines.append(f"{i}\\. [{title_esc}]({upload['url']}){q}")
+        lines.append(str(i) + "\\. [" + title_esc + "](" + upload["url"] + ")" + q)
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"uploads_page_{page - 1}"))
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data="uploads_page_" + str(page - 1)))
     if end < len(uploads):
-        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"uploads_page_{page + 1}"))
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data="uploads_page_" + str(page + 1)))
 
     kb = InlineKeyboardMarkup([nav]) if nav else None
     await reply_fn(
