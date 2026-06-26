@@ -72,7 +72,7 @@ async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         eq        = entry["quality"]
         elang     = entry["lang"]
         q         = " `" + eq + "`" if eq else ""
-        lang      = " | " + escape_md(elang) if elang else ""
+        lang      = " \\| " + escape_md(elang) if elang else ""
         title_esc = escape_md(entry["title"])
         lines.append(emoji + " " + title_esc + q + lang)
         buttons.append(InlineKeyboardButton(
@@ -133,7 +133,7 @@ async def handle_search_pick(update: Update, context: ContextTypes.DEFAULT_TYPE)
         eq        = e["quality"]
         elang     = e["lang"]
         q         = " `" + eq + "`" if eq else ""
-        lang      = " | " + escape_md(elang) if elang else ""
+        lang      = " \\| " + escape_md(elang) if elang else ""
         title_esc = escape_md(e["title"])
         lines.append(emoji + " " + title_esc + q + lang)
         buttons.append(InlineKeyboardButton(

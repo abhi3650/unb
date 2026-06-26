@@ -323,7 +323,7 @@ def _entry_line(index: int, entry: dict) -> str:
     eq        = entry["quality"]
     elang     = entry["lang"]
     q         = " `" + eq + "`" if eq else ""
-    lang      = " | " + escape_md(elang) if elang else ""
+    lang      = " \\| " + escape_md(elang) if elang else ""
     title_esc = escape_md(entry["title"])
     eurl      = entry["url"]
     return str(index) + "\\. [" + title_esc + "](" + eurl + ")" + q + lang
@@ -456,7 +456,7 @@ async def handle_digest_section(update: Update, context: ContextTypes.DEFAULT_TY
         eq        = entry["quality"]
         elang     = entry["lang"]
         q         = " `" + eq + "`" if eq else ""
-        lang      = " | " + escape_md(elang) if elang else ""
+        lang      = " \\| " + escape_md(elang) if elang else ""
         title_esc = escape_md(entry["title"])
         lines.append(emoji + " " + title_esc + q + lang)
     lines += ["", italic("Tap a number to get download links")]
@@ -539,7 +539,7 @@ async def handle_digest_pick(update: Update, context: ContextTypes.DEFAULT_TYPE)
         eq        = e["quality"]
         elang     = e["lang"]
         q         = " `" + eq + "`" if eq else ""
-        lang      = " | " + escape_md(elang) if elang else ""
+        lang      = " \\| " + escape_md(elang) if elang else ""
         title_esc = escape_md(e["title"])
         lines.append(emoji + " " + title_esc + q + lang)
     lines += ["", italic("Tap a number to get download links")]
@@ -684,8 +684,8 @@ async def start_scraper(context: ContextTypes.DEFAULT_TYPE):
         etit = entry["title"]
         eurl = entry["url"]
         q    = " `" + eq   + "`"               if eq   else ""
-        lang = " | " + escape_md(elng)          if elng else ""
-        size = " | " + escape_md(esz)           if esz  else ""
+        lang = " \\| " + escape_md(elng)          if elng else ""
+        size = " \\| " + escape_md(esz)           if esz  else ""
         msg  = (
             "🎬 *New Upload on 1TamilMV\\!*\n\n"
             "📌 " + bold(etit) + q + lang + size + "\n"

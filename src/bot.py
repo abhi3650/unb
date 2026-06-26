@@ -150,7 +150,7 @@ def main() -> None:
             WAITING_ADMIN_SELECT: [CallbackQueryHandler(handle_admin_selection, pattern="^select_admin_")],
         },
         fallbacks=[CommandHandler("cancel", _cancel)],
-        per_user=True, allow_reentry=True,
+        per_user=True, per_message=False, allow_reentry=True,
     )
     add_admin_conv = ConversationHandler(
         entry_points=[CommandHandler("addadmin", add_admin_cmd)],
